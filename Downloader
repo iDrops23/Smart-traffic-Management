@@ -1,0 +1,298 @@
+import sys
+import pandas as pd
+from PyQt5.QtWidgets import QDialog, QApplication, QWidget, QLabel, QVBoxLayout, QComboBox, QPushButton, \
+    QMessageBox, QFileDialog, QMainWindow, QHBoxLayout, QSizePolicy, QCheckBox
+from PyQt5.QtCore import Qt, QDate
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtGui import QFont
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+import matplotlib.pyplot as plt
+from datetime import datetime
+from qdarkstyle import load_stylesheet_pyqt5
+import socket
+
+class PlotWindow(QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+
+        self.fig, self.ax = plt.subplots(figsize=(8, 8))
+        self.canvas = FigureCanvas(self.fig)
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        layout = QVBoxLayout(central_widget)
+        layout.addWidget(self.canvas)
+        self.setWindowTitle("Result")
+        self.setGeometry(100, 100, 1300, 680)
+        # Apply the dark style
+        self.setStyleSheet(load_stylesheet_pyqt5())
+
+    def update_plot(self, time, obj, selected_datetime, include_day=True):
+        if include_day:
+            selected_year = selected_datetime.year
+            selected_month = selected_datetime.month
+            selected_day = selected_datetime.day
+
+            # Filter data based on the selected level (Year-Month-Day)
+            filtered_data = [
+                (
+                    t.hour,  # Extract the hour from the timestamp t
+                    o  # Object value for the corresponding hour
+                )
+                for o, t in zip(obj, time)  # Iterate through each obj and time pair
+                if t.year == selected_year and t.month == selected_month and t.day == selected_day  # Check if the year, month, and day of t match the selected date
+            ]
+
+            # Sum the values for each hour
+            summed_values_per_hour = {}
+            for hour, value in filtered_data:
+                summed_values_per_hour[hour] = summed_values_per_hour.get(hour, 0) + value
+
+            # Create X and Y lists, with X representing time from 12am to 12pm
+            X = list(range(24))
+            Y = [summed_values_per_hour.get(hour, 0) for hour in X]
+
+            # Plotting
+            self.ax.clear()
+            self.ax.plot(X, Y, marker='o', linestyle='-', label=f'No. of vehicles on {selected_datetime.strftime("%Y-%B-%d")}')
+            self.ax.set_title(f'No. of Vehicles on {selected_datetime.strftime("%Y-%B-%d")}')
+            self.ax.set_xlabel('Hour of the Day')
+        else:
+            # Filter data based on the selected level (Year-Month)
+            filtered_data = [
+                (
+                    t.day,  # Extract the day from the timestamp t
+                    o  # Object value for the corresponding day
+                )
+                for o, t in zip(obj, time)  # Iterate through each obj and time pair
+                if t.year == selected_datetime.year and t.month == selected_datetime.month  # Check if the year and month of t match the selected date
+            ]
+
+            # Sum the values for each day
+            summed_values_per_day = {}
+            for day, value in filtered_data:
+                summed_values_per_day[day] = summed_values_per_day.get(day, 0) + value
+
+            # Create X and Y lists, with X fixed from 1 to 31
+            X = list(range(1, 32))
+            Y = [summed_values_per_day.get(day, 0) for day in X]
+
+            # Plotting
+            self.ax.clear()
+            self.ax.plot(X, Y, marker='o', linestyle='-', label=f'No. of vehicles in {selected_datetime.strftime("%B")}')
+            self.ax.set_title(f'No. of Vehicles for {selected_datetime.strftime("%B")}-{selected_datetime.year}')
+            self.ax.set_xlabel('Day')
+
+        self.ax.set_ylabel('No. Vehicles')
+        self.ax.legend()
+
+        # Show the grid
+        self.ax.grid(True)
+
+        # Set major ticks on the x-axis
+        if include_day:
+            self.ax.set_xticks(range(24))
+            self.ax.set_xticklabels([f'{hour}:00' for hour in range(24)])
+        else:
+            self.ax.set_xticks(range(1, 32))
+
+        # Display the values in each plot
+        for x, y in zip(X, Y):
+            self.ax.text(x, y, f'{y}', ha='center', va='bottom')
+
+        # Update the canvas
+        self.canvas.draw()
+
+
+class DatePlotterApp(QDialog):
+    def __init__(self):
+        super().__init__()
+
+        # Initialize data as empty
+        self.obj = []
+        self.time = []
+        self.plot_window = PlotWindow(self)
+
+        self.init_ui()
+
+    def init_ui(self):
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+        title_label = QLabel("Smart Traffic Management")
+        title_font = QFont("Rockwell Extra Bold", 16, QFont.Bold)
+        title_label.setFont(title_font)
+        title_label.setAlignment(Qt.AlignCenter)
+
+        self.setWindowTitle('Smart Traffic Management Downloader')
+        self.setGeometry(100, 100, 350, 200)
+
+        self.setStyleSheet(load_stylesheet_pyqt5())
+
+        layout = QVBoxLayout()
+
+        layout.addWidget(title_label)
+
+        # Year Picker
+        self.year_label = QLabel('Year:')
+        self.year_picker = QComboBox()
+        self.year_picker.setToolTip("Pick a Year to visualize")
+        layout.addWidget(self.year_label)
+        layout.addWidget(self.year_picker)
+
+        # Month Picker
+        self.month_label = QLabel('Month:')
+        self.month_picker = QComboBox()
+        self.month_picker.setToolTip("Pick a month to visualize")
+        month_names = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+        self.month_picker.addItems(month_names)
+        layout.addWidget(self.month_label)
+        layout.addWidget(self.month_picker)
+
+        # Day Picker
+        self.day_label = QLabel('Day:')
+        self.day_picker = QComboBox()
+        self.day_picker.setToolTip("Pick a day to visualize")
+        layout.addWidget(self.day_label)
+        layout.addWidget(self.day_picker)
+
+        # Include Day Checkbox
+        self.include_day_checkbox = QCheckBox('Specific Day')
+        self.include_day_checkbox.setToolTip("Check to include specific day")
+        layout.addWidget(self.include_day_checkbox)
+
+        # Download Data Button
+        self.download_button = QPushButton('Download Data')
+        self.download_button.setToolTip("Download data from server")
+        self.download_button.clicked.connect(self.download_file)
+        layout.addWidget(self.download_button)
+
+        # Load Data Button
+        self.load_data_button = QPushButton('Choose Downloaded Data')
+        self.load_data_button.setToolTip("Choose downloaded data from storage")
+        self.load_data_button.clicked.connect(self.load_data_from_excel_dialog)
+        layout.addWidget(self.load_data_button)
+
+        # Plot Button
+        self.plot_button = QPushButton('Plot Data')
+        self.plot_button.setToolTip("Plot the chosen Year, Month, and Day")
+        self.plot_button.clicked.connect(self.show_plot_window)
+        layout.addWidget(self.plot_button)
+
+        self.setLayout(layout)
+
+    def load_data_from_excel_dialog(self):
+        options = QFileDialog.Options()
+        options |= QFileDialog.ReadOnly
+
+        file_dialog = QFileDialog()
+        file_dialog.setFileMode(QFileDialog.ExistingFile)
+        file_dialog.setNameFilter("Excel Files (*.xlsx *.xls)")
+        file_dialog.setOptions(options)
+
+        if file_dialog.exec_() == QFileDialog.Accepted:
+            selected_file = file_dialog.selectedFiles()[0]
+            self.load_data_from_excel(selected_file)
+
+    def load_data_from_excel(self, file_path):
+        try:
+            # Read data from Excel file into a DataFrame
+            df = pd.read_excel(file_path)
+
+            # Assuming your Excel file has columns named 'Object' and 'Time'
+            self.obj = df['Object'].tolist()
+            self.time = pd.to_datetime(df['Time']).to_frame()  # Convert DatetimeIndex to DataFrame
+            self.time.columns = ['Time']  # Rename the column to 'Time'
+
+            # Update the year picker
+            unique_years = self.time['Time'].dt.year.unique()
+            self.year_picker.clear()
+            self.year_picker.addItems([str(year) for year in unique_years])
+            self.year_picker.setCurrentText(str(unique_years[0]))
+
+            # Update the month picker with month names
+            month_names = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+            self.month_picker.clear()
+            self.month_picker.addItems(month_names)
+            self.month_picker.setCurrentText("January")  # Set the default to January
+
+            # Update the day picker based on the selected year and month
+            self.update_day_picker()
+
+        except Exception as e:
+            QMessageBox.critical(self, 'Error', f"Error loading data from Excel file: {e}")
+
+    def update_day_picker(self):
+        selected_year = int(self.year_picker.currentText())
+        selected_month = self.month_picker.currentIndex() + 1  # Adding 1 to make it 1-indexed
+
+        # Filter data based on the selected year and month
+        filtered_data = [
+            t.day  # Extract the day from the timestamp t
+            for t in self.time['Time']  # Iterate through each timestamp
+            if t.year == selected_year and t.month == selected_month  # Check if the year and month of t match the selected date
+        ]
+
+        # Update the day picker with unique days
+        unique_days = sorted(set(filtered_data))
+        self.day_picker.clear()
+        self.day_picker.addItems([str(day) for day in unique_days])
+        self.day_picker.setCurrentText(str(unique_days[0]))
+
+    def show_plot_window(self):
+        selected_year = self.year_picker.currentText()
+        selected_month = self.month_picker.currentText()
+        selected_day = self.day_picker.currentText()
+        selected_datetime_str = f"{selected_year}-{selected_month}-{selected_day}"
+        selected_datetime = datetime.strptime(selected_datetime_str, "%Y-%B-%d")
+
+        include_day = self.include_day_checkbox.isChecked()
+
+        # Update the plot in the plot window
+        self.plot_window.update_plot(self.time['Time'], self.obj, selected_datetime, include_day)
+
+        # Show the plot window
+        self.plot_window.show()
+
+    def download_file(self):
+        host = "192.168.56.8"  # Replace with the correct IP address
+        port = 12345  # Replace with the correct port
+
+        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        try:
+            client_socket.connect((host, port))
+            response = client_socket.recv(1024).decode()
+            QMessageBox.information(self, 'Server Response', response)
+
+            if response == 'File exists':
+                filename, _ = QFileDialog.getSaveFileName(self, 'Save File', '', 'Excel files (*.xlsx)')
+                if filename:
+                    with open(filename, 'wb') as file:
+                        data = client_socket.recv(1024)
+                        while data:
+                            file.write(data)
+                            data = client_socket.recv(1024)
+
+                    QMessageBox.information(self, 'Download Complete', f"File received and saved as {filename}")
+                else:
+                    QMessageBox.information(self, 'Download Canceled', "Download canceled.")
+            else:
+                QMessageBox.warning(self, 'File Not Found', "File does not exist on the server.")
+
+        except Exception as e:
+            QMessageBox.critical(self, 'Error', f"Error: {str(e)}")
+
+        finally:
+            client_socket.close()
+
+    def update_day_picker_on_month_change(self):
+        self.update_day_picker()
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    QApplication.setFont(QFont("Corbel light"))
+    window = DatePlotterApp()
+    window.show()
+    sys.exit(app.exec_())
